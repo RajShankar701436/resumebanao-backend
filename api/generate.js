@@ -1,0 +1,185 @@
+// Vercel Serverless Function for Resume Generation
+// Save this as: /api/generate.js in your Vercel project
+
+const { GoogleGenerativeAI } = require('@google/generative-ai');
+
+// CORS headers for browser requests
+const corsHeaders = {
+  'Access-Control-Allow-Origin': 'https://resumebanao.in',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+  'Access-Control-Max-Age': '86400',
+};
+
+module.exports = async (req, res) => {
+  // Handle CORS preflight requests
+  if (req.method === 'OPTIONS') {
+    return res.status(200).set(corsHeaders).end();
+  }
+
+  // Only allow POST requests
+  if (req.method !== 'POST') {
+    return res.status(405).set(corsHeaders).json({ 
+      error: 'Method not allowed. Use POST.' 
+    });
+  }
+
+  try {
+    // Get API key from environment variable
+    const apiKey = process.env.GEMINI_API_KEY;
+    
+    if (!apiKey) {
+      console.error('GEMINI_API_KEY is not set in environment variables');
+      return res.status(500).set(corsHeaders).json({ 
+        error: 'Server configuration error. Please contact support.' 
+      });
+    }
+
+    // Get resume text from request body
+    const { resumeText } = req.body;
+    
+    if (!resumeText || resumeText.trim().length < 10) {
+      return res.status(400).set(corsHeaders).json({ 
+        error: 'Please provide valid resume text (minimum 10 characters).' 
+      });
+    }
+
+    // Initialize Google Gemini AI
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
+
+    // AI Prompt optimized for Indian resume formatting
+    const prompt = `
+    You are an expert resume writer specializing in the Indian job market and ATS (Applicant Tracking System) optimization.
+    
+    TASK: Convert the following raw resume text into a well-structured, ATS-friendly resume formatted for Indian recruiters.
+    
+    INPUT RESUME TEXT:
+    ${resumeText}
+    
+    FORMAT THE RESUME EXACTLY AS FOLLOWS:
+    
+    NAME
+    [Extract and format the name prominently. Include contact information with Indian phone format (+91) if available.]
+    
+    EDUCATION
+    [Format education in reverse chronological order. Include: Degree, University/College, Year, Percentage/CGPA if available.
+    Use standard Indian education terminology: B.Tech, M.Tech, B.E., M.B.A., B.Sc., M.Sc., etc.]
+    
+    SKILLS
+    [Categorize skills into: Technical Skills, Soft Skills, Tools & Technologies.
+    List 8-12 most relevant skills. Include keywords common in Indian job descriptions.]
+    
+    EXPERIENCE
+    [Format work experience in reverse chronological order (latest first).
+    For each position include: Job Title, Company Name, Duration (Month Year - Month Year), Location (Indian cities).
+    Use bullet points starting with action verbs: Developed, Implemented, Managed, Optimized, Led, etc.
+    Quantify achievements with metrics: "increased by 40%", "reduced time by 30%", "managed team of 5", etc.]
+    
+    IMPORTANT FOR INDIAN MARKET:
+    1. Use standard Indian date format (Month Year - Month Year)
+    2. Include percentages/CGPA for education if available
+    3. Use common Indian job titles: Software Engineer, Marketing Manager, Business Analyst, etc.
+    4. Include location for work experience (Bangalore, Mumbai, Delhi, Hyderabad, etc.)
+    5. Structure for ATS: Use standard section headings, avoid graphics/tables
+    
+    OUTPUT REQUIREMENTS:
+    - Return a JSON object with exactly these 4 keys: "NAME", "EDUCATION", "SKILLS", "EXPERIENCE"
+    - Each value should be a string with proper formatting and line breaks
+    - Use \\n for line breaks in JSON string values
+    - Do not add any additional text or explanations
+    - Ensure the output is valid JSON
+    
+    FINAL OUTPUT MUST BE VALID JSON ONLY:
+    `;
+
+    // Generate content using Gemini AI
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    const generatedText = response.text();
+
+    // Parse the AI response (it should be JSON)
+    let formattedResume;
+    try {
+      // Extract JSON from the response (AI might add markdown)
+      const jsonMatch = generatedText.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        formattedResume = JSON.parse(jsonMatch[0]);
+      } else {
+        // If no JSON found, create a structured response from text
+        formattedResume = {
+          NAME: extractSection(generatedText, 'NAME'),
+          EDUCATION: extractSection(generatedText, 'EDUCATION'),
+          SKILLS: extractSection(generatedText, 'SKILLS'),
+          EXPERIENCE: extractSection(generatedText, 'EXPERIENCE')
+        };
+      }
+    } catch (parseError) {
+      console.error('Error parsing AI response:', parseError);
+      // Fallback: Return the raw text in the expected format
+      formattedResume = {
+        NAME: 'Resume Generated by Resumebanao\n' + (resumeText.split('\n')[0] || ''),
+        EDUCATION: 'Education details extracted from your resume',
+        SKILLS: 'Skills extracted from your resume',
+        EXPERIENCE: 'Experience details extracted from your resume'
+      };
+    }
+
+    // Return successful response
+    return res.status(200).set(corsHeaders).json(formattedResume);
+
+  } catch (error) {
+    console.error('Server error:', error);
+    
+    // Provide helpful error messages
+    let errorMessage = 'Failed to process resume. Please try again.';
+    let statusCode = 500;
+    
+    if (error.message.includes('API key not valid')) {
+      errorMessage = 'AI service configuration error. Please contact support.';
+      statusCode = 503;
+    } else if (error.message.includes('quota')) {
+      errorMessage = 'Service temporarily unavailable. Please try again in a few minutes.';
+      statusCode = 503;
+    } else if (error.message.includes('network')) {
+      errorMessage = 'Network error. Please check your connection and try again.';
+      statusCode = 503;
+    }
+    
+    return res.status(statusCode).set(corsHeaders).json({ 
+      error: errorMessage 
+    });
+  }
+};
+
+// Helper function to extract sections from text
+function extractSection(text, sectionName) {
+  const lines = text.split('\n');
+  let inSection = false;
+  let sectionContent = [];
+  
+  for (let line of lines) {
+    if (line.toUpperCase().includes(sectionName)) {
+      inSection = true;
+      continue;
+    }
+    
+    if (inSection) {
+      // Stop when we hit another section
+      if (line.toUpperCase().includes('NAME') || 
+          line.toUpperCase().includes('EDUCATION') || 
+          line.toUpperCase().includes('SKILLS') || 
+          line.toUpperCase().includes('EXPERIENCE')) {
+        if (!line.toUpperCase().includes(sectionName)) {
+          break;
+        }
+      }
+      
+      if (line.trim()) {
+        sectionContent.push(line.trim());
+      }
+    }
+  }
+  
+  return sectionContent.join('\n') || `No ${sectionName.toLowerCase()} information found`;
+}
