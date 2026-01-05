@@ -1,0 +1,19 @@
+{
+  "name": "resumebanao-backend",
+  "version": "1.0.0",
+  "description": "Backend API for Resumebanao - AI Resume Builder",
+  "main": "api/generate.js",
+  "scripts": {
+    "start": "vercel dev",
+    "deploy": "vercel --prod"
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.8.0",
+    "cors": "^2.8.5"
+  },
+  "engines": {
+    "node": "18.x"
+  },
+  "author": "AdGrowTech",
+  "license": "MIT"
+}
